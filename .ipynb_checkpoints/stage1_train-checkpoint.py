@@ -147,11 +147,12 @@ def trainer_synapse(model):
     # criterion = nn.MSELoss()
     # criterion = InfoNCELoss() #对比损失函数
     #上下两路分别提取各自得特征，中间进行融合两者得特征对判别正负样本得下路进行指导。上路不需要指导，上路是为了提取用户语音的特征信息
-    critertion_feature = nn.CosineSimilarity(dim=1)  #计算两个特征向量的余弦相似度
+    # critertion_feature = nn.CosineSimilarity(dim=1)  #计算两个特征向量的余弦相似度
     # critertion_crossFusion = BatchInfoNCELoss()  #两者中间融合得特征进行对比损失计算，正样本和负样本。最终这部分特征会指导判别正负样本
-    # critertion_contrastive = InfoNCELoss()
+    critertion_contrastive = InfoNCELoss()
     # critertion_BCE = nn.BCEWithLogitsLoss()  #二分类交叉熵损失函数
     critertion_MSE_U = nn.MSELoss()
+
 
     # optimizer = optim.AdamW(model.parameters(), lr=learning_rate) ###
     optimizer = optim.AdamW(
@@ -192,13 +193,13 @@ def trainer_synapse(model):
             # outputs= model(audio) 
             # print("output shape: ",outputs.shape)
             loss1 = critertion_MSE_U(ultrasound_reconstructed, ultrasound)  #计算特征向量和说话人向量的余弦相似度
-            # loss2 = critertion_contrastive(proj_feature_u, proj_feature_v)  #计算音频特征和加速度特征的对比损失
-            loss2 = 1 - critertion_feature(proj_feature_u, proj_feature_v).mean()  #计算音频特征和加速度特征的余弦相似度，转化为损失
+            loss2 = critertion_contrastive(proj_feature_u, proj_feature_v)  #计算音频特征和加速度特征的对比损失
+        
 
             # loss2 = critertion_crossFusion(cross_feature, user)  #计算融合特征和正负样本标签的对比损失,同一个批次内部，利用正负样本的标签进行对比学习
             # loss3 = critertion_BCE(user_speaker.squeeze(), user.float())  #计算二分类交叉熵损失函数
             # loss = (1-loss1).mean() + loss2 + loss3  #总损失函数， loss2 *0.1系数，平衡损失
-            loss = loss1 +  loss2
+            loss = loss1 + 0.1 * loss2
 
             optimizer.zero_grad()
             loss.backward()
@@ -242,9 +243,10 @@ def trainer_synapse(model):
     # writer.close()
     return "Training Finished!"
 
+
 def main_train_WaveformModel():
     # 创建模型
-    T = 5 # 5 seconds
+    T = 3 # 5 seconds
     batch_size = 4
     feature_dim = 512
     frames_per_sec = 10
@@ -253,6 +255,7 @@ def main_train_WaveformModel():
 
     trainer_synapse(model)
 
+
 def test_model(model):
     
     batch_size = 256
@@ -260,29 +263,25 @@ def test_model(model):
     #test dataset path
     #正样本和负样本，负样本是正样本的10倍数量，合在一起进行推理
     # data_path =  r"E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset.csv" #测试样本
-    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset.csv" #正样本 linux  
-    data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_fakeMismatch.csv" #正样本 linux  
-    
+    data_path =  r"E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset_ldxTest.csv" #测试样本
 
 
     test_dataset = USDataset(data_path)
     print("====== Test Dataset Count: =======", test_dataset.__len__())
 
     #output path
-    # output_path = r"E:\dataset\ultrasound_video_audio\record\stage1_test_dataset" #mismatching negitive samples, 只保存预测的label
-    # output_path = "/root/autodl-tmp/Results/stage1_test_dataset" #  
-    output_path = "/root/autodl-tmp/Results/stage1_test_dataset_fakeMismatch" #  
+    output_path = r"E:\dataset\ultrasound_video_audio\record\stage1_test_dataset" #mismatching negitive samples, 只保存预测的label
 
     # 加载预训练模型参数
     # model_path = "./checkpoints/model_epoch_400.pth"  # 使用最后一个epoch的模型
     model_path = "./checkpoints/stage1/stage1_best_model.pth"  # 使用best_model
-    
     # model_path = "Z:/dataset/accelerometer/record/RESULT_original_xyzTrans_removeTimbre_average_BIGVGAN_swinUnet_LGDZN/model_epoch_400.pth"  # 使用best_model
     # model_path = r"Z:\dataset\accelerometer_audio\AccVoice\record\RESULT_original_removeTimbre_average_BIGVGAN_swinUnet_crossUser2\best_model.pth"
 
     model = model.to(device) #single gpu test
     # model = nn.DataParallel(model.cuda(), device_ids=gpus, output_device=gpus[0]) #multi gpu test
     model.load_state_dict(torch.load(model_path))
+
 
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
@@ -294,15 +293,14 @@ def test_model(model):
         save_path_index = 0
         for batch in test_loader:
             ultrasound = batch['ultrasound']    #[N, 1, 3000*T] batch_size, 
-            video_feature = batch['video'] #[N, 50, 512]
+            video = batch['video'] #[N, 50, 512]
 
             # ultrasound = torch.transpose(ultrasound, -2, -1)  #转置，变成[N, 1, 500, 80]
             # video = torch.transpose(video, -2, -1)
             # audio = audio.to(device=device, dtype=torch.float32)  #GPU上训练，数据必须放入GPU，参数在GPU上更新
             # label = label.to(device=device, dtype=torch.float32)
             ultrasound = ultrasound.cuda(non_blocking=True)  #GPU上训练，数据必须放入GPU，参数在GPU上更新, non_blocking=True启用异步数据传输。
-            video_feature = video_feature.cuda(non_blocking=True) #将 Tensor 数据从 CPU 移动到 GPU 时，可以通过设置 non_blocking=True 来启用异步传输模式，从而提高计算效率。
-            proj_feature_v = video_feature.mean(dim=1)  #对时间维度进行平均池化，得到视频的全局特征表示 
+            video = video.cuda(non_blocking=True) #将 Tensor 数据从 CPU 移动到 GPU 时，可以通过设置 non_blocking=True 来启用异步传输模式，从而提高计算效率。
             
             time_start = time.time()
             feature_u, proj_feature_u, ultrasound_reconstructed = model(ultrasound)
@@ -315,7 +313,6 @@ def test_model(model):
             output = feature_u.squeeze(dim=1).cpu().numpy()  #N, 50, 512
             output1 = proj_feature_u.cpu().numpy()  #N, 512 
             output2 = ultrasound_reconstructed.squeeze(dim=1).cpu().numpy() #N, 32, 3000*T
-            output3 = proj_feature_v.cpu().numpy()  #N, 512 
             
             print("output shape: ", output1.shape)
             for j in range(output1.shape[0]):
@@ -323,7 +320,7 @@ def test_model(model):
                     break
                 print(f"Processing sample {save_path_index + 1}/{len(sample_names)}: {sample_names[save_path_index]}")
            
-                parts = sample_paths[save_path_index].split('/')
+                parts = sample_paths[save_path_index].split('\\')
                 # folder1 = parts[-3]
                 folder2 = parts[-2]
      
@@ -336,20 +333,16 @@ def test_model(model):
                 output_file = os.path.join(nested_dir, f"{sample_names[save_path_index]}_mid.npy")
                 output_file1 = os.path.join(nested_dir, f"{sample_names[save_path_index]}_midPool.npy")
                 output_file2 = os.path.join(nested_dir, f"{sample_names[save_path_index]}_us.npy")
-                output_file3 = os.path.join(nested_dir, f"{sample_names[save_path_index]}_meanVideoFeature.npy")
 
 
 
                 out = output[j] #存储ultrasound 中间特征
                 out1 = output1[j] #存储ultrasound 中间特征池化后的特征
-                out2 = output2[j] #存储重建的ultrasound 波形
-                out3 = output3[j] #存储视频 全局特征池化后的特征
-                    
+                out2 = output2[j] #存储重建的ultrasound 波形    
                 np.save(output_file, out)
                 np.save(output_file1, out1)
                 np.save(output_file2, out2)
-                np.save(output_file3, out3)
-                
+
                 save_path_index += 1
 
 def main_test_WaveformModel():

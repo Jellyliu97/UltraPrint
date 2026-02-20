@@ -2,6 +2,8 @@ import os
 import glob
 import pandas as pd
 from sklearn.model_selection import train_test_split
+import numpy as np
+import random
 
 def create_dataset_csv(root_dir, train_ratio=0.8):
     # Lists to store dataset information
@@ -9,7 +11,8 @@ def create_dataset_csv(root_dir, train_ratio=0.8):
     
     # Get all user directories
     user_dirs = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
-    skip_users = ['ldx0', 'ldx1', 'ldx2', 'ldx3', 'ldx4', 'ldx5']
+    # skip_users = ['ldx1', 'ldx2', 'ldx3', 'ldx4', 'ldx5']
+    skip_users = ['qmj', 'rw', 'wk', 'wyb', 'xl', 'fake_cf'] #test_dataset + fake dataset
     user_dirs = [u for u in user_dirs if u not in skip_users]
 
     # Create a map for user labels (index from 0)
@@ -23,26 +26,24 @@ def create_dataset_csv(root_dir, train_ratio=0.8):
         
         # Find all .mp4 files to identify base valid samples
         # Assuming format:  {name}_video.mp4
-        video_files = glob.glob(os.path.join(user_path, "*_video.mp4"))
+        video_files = glob.glob(os.path.join(user_path, "*_video.npy"))
         
         for vid_path in video_files:
             # Extract base name to verify other files exist
-            # e.g., C:/.../User1/sample1_video.mp4 -> sample1
-            base_name_with_path = vid_path.replace('_video.mp4', '')
+            # e.g., C:/.../User1/sample1_video.npy -> sample1
+            base_name_with_path = vid_path.replace('_video.npy', '')
             base_name = os.path.basename(base_name_with_path)
             
-            audio_path = f"{base_name_with_path}_audio.wav"
             ultrasound_path = f"{base_name_with_path}_us.npy"
             
             video_feature_path = f"{base_name_with_path}_video.npy"
             
             # Check if corresponding files exist
-            if os.path.exists(audio_path) and os.path.exists(ultrasound_path) and os.path.exists(video_feature_path):
+            if  os.path.exists(ultrasound_path) and os.path.exists(video_feature_path):
                 sample_info = {
                     'user_name': user,
                     'label': user_to_idx[user],
                     'video_path': vid_path,
-                    'audio_path': audio_path,
                     'ultrasound_path': ultrasound_path,
                     'sample_name': base_name,
                     'video_feature_path': video_feature_path,
@@ -90,11 +91,20 @@ def create_dataset_csv(root_dir, train_ratio=0.8):
     print(f"Saved train CSV to: {train_csv_path}")
     print(f"Saved test CSV to: {test_csv_path}")
 
-#different distance test
+#for new users test dataset
 def create_dataset_csv2(root_dir):
     # root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
-    target_dirs = ['ldx0', 'ldx1', 'ldx2', 'ldx3', 'ldx4', 'ldx5']
-    label = 1
+    # target_dirs = ['qmj', 'rw', 'wk', 'wyb', 'xl'] # only for test_dataset_crossUser
+    # target_dirs = ['ldx2', 'ldx4'] # only for test_dataset_ldxTest
+    # target_dirs = ['qmj', 'rw', 'wk', 'wyb', 'xl'] #test_dataset + fake dataset
+    # target_dirs = ['fake_cf']  # only for fake dataset
+    
+    # target_dirs = ['impact_angle']  # only for impact dataset 
+    # target_dirs = ['impact_dis']  # only for impact dataset
+    target_dirs = ['impact_phone']  # only for impact dataset 
+    
+      
+    label = -1
 
     all_experiments = []
     
@@ -107,22 +117,20 @@ def create_dataset_csv2(root_dir):
             return
 
         # Find all .mp4 files
-        video_files = glob.glob(os.path.join(user_path, "*_video.mp4"))
+        video_files = glob.glob(os.path.join(user_path, "*_video.npy"))
         
         for vid_path in video_files:
-            base_name_with_path = vid_path.replace('_video.mp4', '')
+            base_name_with_path = vid_path.replace('_video.npy', '')
             base_name = os.path.basename(base_name_with_path)
             
-            audio_path = f"{base_name_with_path}_audio.wav"
             ultrasound_path = f"{base_name_with_path}_us.npy"
             video_feature_path = f"{base_name_with_path}_video.npy"
             
-            if os.path.exists(audio_path) and os.path.exists(ultrasound_path) and os.path.exists(video_feature_path):
+            if os.path.exists(ultrasound_path) and os.path.exists(video_feature_path):
                 sample_info = {
                     'user_name': user,
                     'label': label,
                     'video_path': vid_path,
-                    'audio_path': audio_path,
                     'ultrasound_path': ultrasound_path,
                     'sample_name': base_name,
                     'video_feature_path': video_feature_path,
@@ -141,7 +149,12 @@ def create_dataset_csv2(root_dir):
     
     # Save to CSV
     # Defining it as test_dataset_ldxTest.csv as per likely usage for specific test set
-    output_csv_path = os.path.join(root_dir, 'test_dataset_ldxTest.csv')
+    # output_csv_path = os.path.join(root_dir, 'test_dataset_crossUser.csv')
+    # output_csv_path = os.path.join(root_dir, 'test_dataset_fake_cf.csv')
+    # output_csv_path = os.path.join(root_dir, 'test_dataset_ldxTest.csv')
+    output_csv_path = os.path.join(root_dir, 'test_dataset_impact_phone.csv')
+    
+    
     
     df.to_csv(output_csv_path, index=False)
     
@@ -150,11 +163,10 @@ def create_dataset_csv2(root_dir):
 
 
 #构建负样本数据集，将上述得到的正样本的video_path，audio_path，ultrasound_path进行打乱重组，生成负样本数据集，三者不要保证相同的，然后TrueUser标记为0,保存为新的_fakeMismatch.csv文件。直接从上述的csv文件读取进行变换即可，负样本数量保证是正样本的5倍
-def create_negative_samples_csv():
-    root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
-    # input_csv_path = os.path.join(root_dir, 'test_dataset_ldxTest.csv')
-    # output_csv_path = os.path.join(root_dir, 'test_dataset_ldxTest_fakeMismatch.csv')
-    
+#包含相同用户的超声和视频数据对
+def create_negative_samples_csv(root_dir):
+    # root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
+
     input_csv_path = os.path.join(root_dir, 'test_dataset.csv')
     output_csv_path = os.path.join(root_dir, 'test_dataset_fakeMismatch.csv')
 
@@ -168,7 +180,7 @@ def create_negative_samples_csv():
     df = pd.read_csv(input_csv_path)
 
     video_paths = df['video_path'].tolist()
-    audio_paths = df['audio_path'].tolist()
+    # audio_paths = df['audio_path'].tolist()
     ultrasound_paths = df['ultrasound_path'].tolist()
     
     num_samples = len(df)
@@ -178,25 +190,23 @@ def create_negative_samples_csv():
 
     for _ in range(num_samples * 5):  # 5 times the number of positive samples
         vid_path = random.choice(video_paths)
-        aud_path = random.choice(audio_paths)
+        # aud_path = random.choice(audio_paths)
         us_path = random.choice(ultrasound_paths)
 
         # Ensure they are not from the same sample
-        while (vid_path.replace('_video.mp4', '') == aud_path.replace('_audio.wav', '') or
-               vid_path.replace('_video.mp4', '') == us_path.replace('_us.npy', '') or
-               aud_path.replace('_audio.wav', '') == us_path.replace('_us.npy', '')):
+        while (vid_path.replace('_video.npy', '') == us_path.replace('_us.npy', '')):
             vid_path = random.choice(video_paths)
-            aud_path = random.choice(audio_paths)
+            # aud_path = random.choice(audio_paths)
             us_path = random.choice(ultrasound_paths)
 
-        base_name_with_path = vid_path.replace('_video.mp4', '')
+        base_name_with_path = vid_path.replace('_video.npy', '')
         base_name = os.path.basename(base_name_with_path)
 
         sample_info = {
             'user_name': 'mismatch',
             'label': -1,
             'video_path': vid_path,
-            'audio_path': aud_path,
+            # 'audio_path': aud_path,
             'ultrasound_path': us_path,
             'sample_name': base_name,
             'video_feature_path': base_name_with_path + '_video.npy',
@@ -210,6 +220,65 @@ def create_negative_samples_csv():
     print(f"Generated {len(neg_df)} negative samples.")
     print(f"Saved negative samples CSV to: {output_csv_path}")    
 
+#不包含相同用户的超声视频数据对
+def create_negative_samples_csv2(root_dir):
+    # root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
+    
+    times = 5
+    # input_csv_path = os.path.join(root_dir, 'train_dataset.csv')
+    # output_csv_path = os.path.join(root_dir, 'train_dataset_fakeMismatch.csv')
+    
+    input_csv_path = os.path.join(root_dir, 'test_dataset.csv')
+    output_csv_path = os.path.join(root_dir, 'test_dataset_fakeMismatch.csv')
+
+    if not os.path.exists(input_csv_path):
+        print(f"Error: Input CSV {input_csv_path} not found.")
+        return
+
+    df = pd.read_csv(input_csv_path)
+
+    # Check if there are at least 2 users to create mismatches
+    if len(df['user_name'].unique()) < 2:
+        print("Error: Not enough users to create negative samples between different users.")
+        return
+
+    # Extract paths with their corresponding user ID/Name
+    video_entries = list(zip(df['video_path'], df['user_name']))
+    us_entries = list(zip(df['ultrasound_path'], df['user_name']))
+    
+    num_samples = len(df)
+    negative_samples = []
+
+
+    for _ in range(num_samples * times):  # 5 times the number of positive samples
+        vid_path, vid_user = random.choice(video_entries)
+        us_path, us_user = random.choice(us_entries)
+
+        # Ensure they are from different users
+        while vid_user == us_user:
+            vid_path, vid_user = random.choice(video_entries)
+            us_path, us_user = random.choice(us_entries)
+
+        base_name_with_path = vid_path.replace('_video.npy', '')
+        base_name = os.path.basename(base_name_with_path)
+
+        sample_info = {
+            'user_name': 'mismatch',
+            'label': -1,
+            'video_path': vid_path,
+            # 'audio_path': aud_path,
+            'ultrasound_path': us_path,
+            'sample_name': base_name,
+            'video_feature_path': base_name_with_path + '_video.npy',
+            'TrueUser': 0
+        }
+        negative_samples.append(sample_info)
+
+    neg_df = pd.DataFrame(negative_samples)
+    neg_df.to_csv(output_csv_path, index=False)
+
+    print(f"Generated {len(neg_df)} negative samples (different users).")
+    print(f"Saved negative samples CSV to: {output_csv_path}")
 
 
 
@@ -220,7 +289,6 @@ if __name__ == "__main__":
 
     # create_dataset_csv(dataset_root, train_ratio=0.9)
 
-    create_dataset_csv2()
+    create_dataset_csv2(dataset_root)
 
-
-    create_negative_samples_csv()
+    # create_negative_samples_csv2(dataset_root)

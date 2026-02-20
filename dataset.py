@@ -1,5 +1,5 @@
 import torch
-import torchaudio
+# import torchaudio
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
@@ -19,6 +19,7 @@ class USDataset(Dataset):
         self.data2 = self.data.iloc[:]['video_feature_path'].tolist()
         # self.data3 = self.data.iloc[:]['audio_feature_path'].tolist()
         self.data4 = self.data.iloc[:]['TrueUser'].tolist()
+        self.data5 = self.data.iloc[:]['label'].tolist()  
 
 
     def split_samples(self, data):
@@ -26,8 +27,8 @@ class USDataset(Dataset):
         # Process data paths
         for idx in range(len(data)):
             path = data.iloc[idx, 0]
-            prefix = '\\'.join(path.split('\\')[:-1]) + '\\'
-            basename = path.split('\\')[-1].split('.')[0]  #xxx_acc
+            prefix = '/'.join(path.split('/')[:-1]) + '/'
+            basename = path.split('/')[-1].split('.')[0]  #xxx_acc
             suffix = '.' + path.split('.')[-1]
             
             for i in range(0, 7):
@@ -60,20 +61,20 @@ class USDataset(Dataset):
         label_dict = {}
         for i in range(0, len(label)):
             path = label.iloc[i, 0]
-            name = path.split('\\')[-1].split('.')[0]
+            name = path.split('/')[-1].split('.')[0]
             label_dict[name] = path
         return label_dict
     
     def __len__(self):
-        return len(self.data1)
+        return len(self.data2)
 
     def get_audio_path(self, idx):
-        return self.data1[idx]
+        return self.data2[idx]
         # return self.data.iloc[idx, 0] 
     
     def get_audio_name(self, idx):
-        return self.data1[idx].split('\\')[-1].split('.')[0]
-        # return self.data.iloc[idx, 0].split('\\')[-1].split('.')[0]
+        return self.data2[idx].split('/')[-1].split('.')[0]
+        # return self.data.iloc[idx, 0].split('/')[-1].split('.')[0]
     
     def __getitem__(self, idx):
     
@@ -81,7 +82,7 @@ class USDataset(Dataset):
         video_path = self.data2[idx]
         # audio_path = self.data_audio[idx]
         true_user = self.data4[idx]
-
+        label = self.data5[idx]   
         #=======================================================#
         #us data 
         us_data = np.load(us_path)  #shape : [2, 32, 3000*T]
@@ -104,9 +105,10 @@ class USDataset(Dataset):
         true_user = int(true_user)
         true_user = torch.tensor(true_user, dtype=torch.long)
 
-
         #=======================================================#   
-
+        label = int(label)
+        label = torch.tensor(label, dtype=torch.long)
+        #=======================================================#
         # show samples
         if idx < 5 :
             if not os.path.exists('./results'):
@@ -132,4 +134,5 @@ class USDataset(Dataset):
             'video': video_data.contiguous(), #video feature
             # 'audio': audio_data.contiguous(), #audio feature  
             'TrueUser': true_user,  #true user label    
+            'Label': label,  #user label
         }

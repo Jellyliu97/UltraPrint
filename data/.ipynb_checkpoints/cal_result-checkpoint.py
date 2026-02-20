@@ -76,14 +76,11 @@ if __name__ == "__main__":
     # dataset_path = r"E:\dataset\ultrasound_video_audio\record\stage2_test_dataset_ldxTest"
     # dataset_path = r"E:\dataset\ultrasound_video_audio\record\stage2_test_dataset_fakeMismatch"
     
-    #positive samples
-    # dataset_path = "/root/autodl-tmp/Results/test_dataset_ldxTest"
-    dataset_path = "/root/autodl-tmp/Results/test_dataset"
-    # dataset_path = "/root/autodl-tmp/Results/test_dataset_crossUser"
+    dataset_path = "/root/autodl-tmp/test_dataset_ldxTest"
+    # dataset_path = "/root/autodl-tmp/test_dataset"
+    # dataset_path = "/root/autodl-tmp/test_dataset_fakeMismatch"
     
-    #negative samples
-    # dataset_path = "/root/autodl-tmp/Results/test_dataset_fake_cf"
-    # dataset_path = "/root/autodl-tmp/Results/test_dataset_fakeMismatch"
+    
 
     
     if os.path.exists(dataset_path):
