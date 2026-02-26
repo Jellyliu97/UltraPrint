@@ -1,0 +1,4 @@
+Impact_Type	Impact_Level	User	Accuracy	Correct	Total
+dis	15cm	ldx	0.0000	0	1
+dis	20cm	ldx	0.9500	57	60
+dis	25cm	ldx	0.9833	59	60

@@ -21,7 +21,7 @@ class UltrasoundDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
-        npy_path = self.data_info.iloc[idx]['npy_path']
+        npy_path = self.data_info.iloc[idx]['ultrasound_path']
         label = self.data_info.iloc[idx]['label']
 
         # Load numpy file
@@ -82,7 +82,9 @@ class UltrasoundClassifier(nn.Module):
 # --- 3. Training Loop ---
 def train_model():
     # Configuration
-    csv_path = r'E:\dataset\ultrasound_video_audio\DATA\dataset\train_dataset.csv'
+    # csv_path = r'E:\dataset\ultrasound_video_audio\DATA\dataset\train_dataset.csv'
+    csv_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/train_dataset.csv" #正样本 linux
+    
     batch_size = 1024
     num_epochs = 200
     learning_rate = 1e-3
@@ -95,7 +97,8 @@ def train_model():
     
     # Determine number of classes automatically
     unique_labels = full_dataset.data_info['label'].unique()
-    num_classes = len(unique_labels)
+    # num_classes = len(unique_labels)
+    num_classes = 47
     print(f"Detected {num_classes} classes: {sorted(unique_labels)}")
 
     # Split dataset (Optional: split into train/val)
@@ -188,7 +191,8 @@ def train_model():
 def test_model():
     # Configuration
     # test_csv_path = r'E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset.csv'
-    test_csv_path = r'E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset_ldxTest.csv'
+    # test_csv_path = r'E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset_ldxTest.csv'
+    test_csv_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset.csv" 
 
     model_path = './outputs/best_model.pth' # Using best model found during training
     # model_path = './outputs/model_epoch_10.pth' # Using best model found during training

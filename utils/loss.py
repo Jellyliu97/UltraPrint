@@ -60,8 +60,7 @@ class InfoNCELoss(nn.Module):
         
         return (loss_i + loss_t) / 2
     
-
-#利用同一个批次内部的数据做正负样本的对比学习，利用正负样本的标签进行区分
+#计算
 class BatchInfoNCELoss(nn.Module):
     def __init__(self, temperature=0.07):
         super(BatchInfoNCELoss, self).__init__()
@@ -111,6 +110,66 @@ class BatchInfoNCELoss(nn.Module):
         
         return loss
 
+#利用同一个批次内部的数据做不同类别样本的对比学习，利用样本的标签进行区分
+class MultiPositiveInfoNCELoss(nn.Module):
+    """
+    处理多正样本的InfoNCE损失
+    支持不同的温度策略
+    """
+    
+    def __init__(self, temperature=0.07, base_temperature=0.07, 
+                 include_self=True, normalize=True):
+        super().__init__()
+        self.temperature = temperature
+        self.base_temperature = base_temperature
+        self.include_self = include_self
+        self.normalize = normalize
+    
+    def forward(self, features, labels):
+        device = features.device
+        batch_size = features.size(0)
+        
+        if self.normalize:
+            features = F.normalize(features, dim=1)
+        
+        # 计算相似度矩阵
+        similarity_matrix = torch.matmul(features, features.T)  # [batch, batch]
+        
+        # 创建正样本掩码
+        labels = labels.contiguous().view(-1, 1)
+        mask = torch.eq(labels, labels.T).float().to(device)
+        
+        # 处理是否包含自身
+        if not self.include_self:
+            self_mask = torch.eye(batch_size, device=device)
+            mask = mask * (1 - self_mask)
+        
+        # 计算每个样本的正样本数
+        pos_count = mask.sum(dim=1)  # [batch]
+        
+        # 掩码的对角线设为0（避免自身在分母中重复计算）
+        logits_mask = torch.ones_like(mask) - torch.eye(batch_size, device=device)
+        
+        # 计算logits
+        logits = similarity_matrix / self.temperature
+        
+        # 为了数值稳定性，减去最大值
+        logits_max, _ = torch.max(logits, dim=1, keepdim=True)
+        logits = logits - logits_max.detach()
+        
+        # 计算exp
+        exp_logits = torch.exp(logits) * logits_mask
+        
+        # 计算log概率
+        log_prob = logits - torch.log(exp_logits.sum(dim=1, keepdim=True))
+        
+        # 计算每个正样本的平均log概率
+        mean_log_prob_pos = (mask * log_prob).sum(dim=1) / pos_count.clamp(min=1)
+        
+        # 损失
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos.mean()
+        
+        return loss
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2, reduction='mean'):  #alpha = poistive numbers / total numbers  正样本越少，α值应设置得越大 /   γ越大，模型越关注难样本, 0-5。
@@ -132,7 +191,119 @@ class FocalLoss(nn.Module):
         else:
             return focal_loss
         
+# ArcFace 的核心是学习一个"角度空间"
+# 1. 为每个已知类别学习一个权重向量（类中心）
+# 2. 将特征向量和类中心都归一化到单位球面
+# 3. 在角度空间施加间隔 margin
+class ArcFaceLoss(nn.Module):
+    """
+    简化但稳定的ArcFace实现
+    更容易训练，数值稳定性更好
+    """
+    
+    def __init__(self, num_classes, feat_dim, margin=0.5, scale=32):
+        super().__init__()
+        self.num_classes = num_classes
+        self.feat_dim = feat_dim
+        self.margin = margin
+        self.scale = scale
+        
+        # 权重参数
+        self.W = nn.Parameter(torch.Tensor(num_classes, feat_dim))
+        nn.init.xavier_normal_(self.W)
+        
+    def forward(self, features, labels):
+        """
+        features: [batch_size, feat_dim]
+        labels: [batch_size]
+        """
+        # 归一化特征和权重
+        features_norm = F.normalize(features, dim=1)
+        weights_norm = F.normalize(self.W, dim=1)
+        
+        # 计算余弦相似度
+        cosine = torch.mm(features_norm, weights_norm.t())  # [batch, num_classes]
+        
+        # 计算角度
+        with torch.no_grad():
+            # 只对真实类别计算角度
+            cosine_of_target = cosine[torch.arange(len(cosine)), labels]
+            # 确保数值稳定性
+            cosine_of_target = torch.clamp(cosine_of_target, -1+1e-7, 1-1e-7)
+            theta = torch.acos(cosine_of_target)
+        
+        # 添加margin
+        cosine_m = torch.cos(theta + self.margin)
+        
+        # 创建输出
+        output = cosine.clone()
+        output[torch.arange(len(cosine)), labels] = cosine_m
+        
+        # 应用缩放
+        output *= self.scale
+        
+        return output
 
+
+class ArcFaceWithCE(nn.Module):
+    """
+    封装ArcFace和CrossEntropy，使用更方便
+    """
+    
+    def __init__(self, num_classes, feat_dim, margin=0.5, scale=32):
+        super().__init__()
+        self.arcface = ArcFaceLoss(num_classes, feat_dim, margin, scale)
+        self.ce_loss = nn.CrossEntropyLoss()
+        
+    def forward(self, features, labels, return_logits=False):
+        """
+        返回损失值，也可以返回logits用于计算准确率
+        """
+        # 计算ArcFace的logits
+        logits = self.arcface(features, labels)
+        
+        # 计算交叉熵损失
+        loss = self.ce_loss(logits, labels)
+        
+        if return_logits:
+            return loss, logits
+        return loss
+
+class BatchHardTripletLoss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(BatchHardTripletLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: feature matrix with shape (batch_size, feat_dim)
+            targets: ground truth labels with shape (batch_size)
+        """
+        n = inputs.size(0)
+        
+        # Normalize features
+        inputs = torch.nn.functional.normalize(inputs, p=2, dim=1)
+        
+        # Compute pairwise distance, (batch_size, batch_size)
+        dist = torch.pow(inputs, 2).sum(dim=1, keepdim=True).expand(n, n)
+        dist = dist + dist.t()
+        dist.addmm_(inputs, inputs.t(), beta=1, alpha=-2)
+        dist = dist.clamp(min=1e-12).sqrt()  # for numerical stability
+        
+        # For each anchor, find the hardest positive and negative
+        # Ensure targets is (N, 1) for broadcasting
+        targets = targets.view(-1, 1)
+        mask = targets.eq(targets.t())
+        
+        dist_ap, _ = torch.max(dist * mask.float(), dim=1)
+        dist_an, _ = torch.min(dist + 1e6 * mask.float(), dim=1) # Add large val to mask out positives
+        
+        # Compute triplet loss
+        loss = torch.clamp(dist_ap - dist_an + self.margin, min=0.0).mean()
+        
+        return loss
+    
 if __name__ == "__main__":  
     # 测试代码
     batch_size = 128

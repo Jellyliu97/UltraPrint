@@ -30,10 +30,10 @@ import csv
 # from model.encoder import DualImageContrastiveModel
 # from model.accVoice_swinUnet import SwinTransformerSys as SwinUnet
 # from model.CrossViT3 import ImageCrossViT
-from model.stage2_model1 import Stage2Model
+from model.stage3_model1 import Stage3Model
 # from model.AccSeal_model_stage1 import AccSealModelStage1
 # import networks.accVoice_vitUnet as VitUnet
-from utils.loss import InfoNCELoss2, InfoNCELoss, BatchInfoNCELoss, FocalLoss
+from utils.loss import InfoNCELoss2, InfoNCELoss, BatchInfoNCELoss, FocalLoss, MultiPositiveInfoNCELoss, ArcFaceLoss, ArcFaceWithCE
 from matplotlib import pyplot as plt
 
 #single GPU
@@ -78,6 +78,25 @@ def load_stage1_frozen_params(model, checkpoint_path):
         print(f"Successfully loaded Waveform Encoder: {msg}")
     else:
         print("Warning: No Waveform Encoder weights found in checkpoint.")
+        
+    #Load U2V and V2U Models
+    # u2v_dict = {k.replace('model_u2v.', ''): v 
+    #             for k, v in state_dict.items() 
+    #             if k.startswith('model_u2v.')}
+    # if u2v_dict:
+    #     msg = model.model_u2v.load_state_dict(u2v_dict, strict=True)
+    #     print(f"Successfully loaded U2V Model: {msg}")
+    # else:
+    #     print("Warning: No U2V Model weights found in checkpoint.")
+    
+    # v2u_dict = {k.replace('model_v2u.', ''): v 
+    #             for k, v in state_dict.items() 
+    #             if k.startswith('model_v2u.')}
+    # if v2u_dict:
+    #     msg = model.model_v2u.load_state_dict(v2u_dict, strict=True)
+    #     print(f"Successfully loaded V2U Model: {msg}")
+    # else:
+    #     print("Warning: No V2U Model weights found in checkpoint.")
 
 
     # # 2. Load Speech MLP
@@ -94,7 +113,7 @@ def trainer_synapse(model):
    
     learning_rate = 5e-4 #学习率
     num_epochs = 400
-    batch_size = 1024
+    batch_size = 256
     
     #正样本和负样本，负样本是正样本的10倍数量，在每一个epoch中随机选择1/10的负样本，然后和正样本结合组成一个epoch的训练数据
     # pos_data_path = r"E:\dataset\ultrasound_video_audio\DATA\dataset\train_dataset.csv" #正样本 windows
@@ -102,17 +121,17 @@ def trainer_synapse(model):
 
     # neg_data_path = r"Z:\dataset\accelerometer_audio\AccSeal\train_dataset_false_allfake_0-1mismatch.csv" #负样本
     # neg_data_path = r"E:\dataset\ultrasound_video_audio\DATA\dataset\train_dataset_fakeMismatch.csv" #负样本
-    neg_data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/train_dataset_fakeMismatch.csv" #负样本 linux      
+    # neg_data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/train_dataset_fakeMismatch.csv" #负样本 linux      
 
 
     positive_dataset = USDataset(pos_data_path)
-    negative_dataset = USDataset(neg_data_path)
+    # negative_dataset = USDataset(neg_data_path)
 
     print("====== Train positive Dataset Count: =======", positive_dataset.__len__())
-    print("====== Train negative Dataset Count: =======", negative_dataset.__len__())   
+    # print("====== Train negative Dataset Count: =======", negative_dataset.__len__())   
 
     # 1. 将两个数据集合并
-    full_dataset = ConcatDataset([positive_dataset, negative_dataset])
+    # full_dataset = ConcatDataset([positive_dataset, negative_dataset])
 
 
     # # 2. 创建动态负样本采样器
@@ -143,7 +162,7 @@ def trainer_synapse(model):
 
 
 
-    train_loader = DataLoader(full_dataset, batch_size=batch_size, shuffle=True, num_workers=6, pin_memory=True, persistent_workers=True) #静态采样，直接打乱整个数据集进行训练
+    train_loader = DataLoader(positive_dataset, batch_size=batch_size, shuffle=True, num_workers=6, pin_memory=True, persistent_workers=True) #静态采样，直接打乱整个数据集进行训练
 
     # train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4) #增加collate_fn函数处理同一个batch中label不一样长的问题
     # dataloader = [next(iter(dataloader)) for _ in range(10)] #取前 x 个batch
@@ -156,7 +175,7 @@ def trainer_synapse(model):
     # for name, param in model.named_parameters():
     #     if any(module in name for module in ['acc_encoder', 'fusion_network']):
     #         param.requires_grad = False
-    model.freeze_waveform_encoder()
+    model.freeze_model()
     
     model = model.to(device) #single gpu
     # model = nn.DataParallel(model.cuda(), device_ids=gpus, output_device=gpus[0]) #multi gpu
@@ -166,16 +185,26 @@ def trainer_synapse(model):
     # criterion = InfoNCELoss() #对比损失函数
     #上下两路分别提取各自得特征，中间进行融合两者得特征对判别正负样本得下路进行指导。上路不需要指导，上路是为了提取用户语音的特征信息
     # critertion_feature = nn.CosineSimilarity(dim=1)  #计算两个特征向量的余弦相似度
-    # critertion_crossFusion = BatchInfoNCELoss()  #两者中间融合得特征进行对比损失计算，正样本和负样本。最终这部分特征会指导判别正负样本
+    # critertion_batchNCE = BatchInfoNCELoss()  #同一个批次的类别特征进行对比损失计算，多个类别进行聚类
+    # critertion_batchNCE = MultiPositiveInfoNCELoss()
+    # critertion_triplermarginloss = nn.TripletMarginLoss(margin=1.0, p=2)  #三元组损失函数
+    critertion_arcloss = ArcFaceWithCE(47, 256).to(device)  #ArcFace损失函数   
     # critertion_contrastive = InfoNCELoss()
     # critertion_BCE = nn.BCEWithLogitsLoss()  #二分类交叉熵损失函数
-    critertion_focalloss = FocalLoss(alpha=0.2, gamma=2, reduction='mean')  #二分类Focal损失函数
+    # critertion_focalloss = FocalLoss(alpha=0.2, gamma=2, reduction='mean')  #二分类Focal损失函数
     # critertion_MSE = nn.MSELoss()                                                   
 
     # optimizer = optim.AdamW(model.parameters(), lr=learning_rate) ###
     optimizer = optim.AdamW(
     filter(lambda p: p.requires_grad, model.parameters()), # 使用filter进行过滤
     lr=learning_rate)
+    
+    # optimizer = torch.optim.SGD(
+    #     filter(lambda p: p.requires_grad, model.parameters()), # 使用filter进行过滤
+    #     lr=learning_rate,
+    #     momentum=0.9,
+    #     nesterov=True
+    # )
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer,T_max=32,eta_min=1e-6)
 
@@ -197,6 +226,7 @@ def trainer_synapse(model):
             video = batch['video']        #[N, 50，512]
             # speaker = batch['speaker']
             TrueUser = batch['TrueUser']          #[N] 0/1标签，1表示正样本，0表示负样本
+            Label = batch['Label']          #[N] 多类别标签，0~N-1
 
             # ultrasound = torch.transpose(ultrasound, -1, -2)  #转置，变成[N, 500, 80] 适配模型尺寸
             # video = torch.transpose(video, -1, -2)      #转置，变成[N, 500，80]
@@ -205,18 +235,19 @@ def trainer_synapse(model):
             ultrasound = ultrasound.cuda(non_blocking=True) #将 Tensor 数据从 CPU 移动到 GPU 时，可以通过设置 non_blocking=True 来启用异步传输模式，从而提高计算效率。
             video = video.cuda(non_blocking=True)  #GPU上训练，数据必须放入GPU，参数在GPU上更新, non_blocking=True启用异步数据传输。
             # speaker = speaker.cuda(non_blocking=True)
-            TrueUser = TrueUser.cuda(non_blocking=True) 
+            TrueUser = TrueUser.cuda(non_blocking=True)
+            Label = Label.cuda(non_blocking=True) 
             
-            _, user_verfication = model(ultrasound, video)
+            v_feature, out_feature = model(ultrasound, video)
 
             # outputs= model(audio) 
             # print("output shape: ",outputs.shape)
             # loss1 = critertion_feature(speaker_feature_reconstructed, speaker)  #计算特征向量和说话人向量的余弦相似度
 
             # loss = critertion_BCE(user_verfication.squeeze(), user.float())  #计算二分类交叉熵损失函数
-            loss = critertion_focalloss(user_verfication.squeeze(), TrueUser.float())  #计算二分类Focal损失函数
+            # loss = critertion_focalloss(user_verfication.squeeze(), TrueUser.float())  #计算二分类Focal损失函数
 
-            # loss2 = critertion_crossFusion(cross_feature, user)  #计算融合特征和正负样本标签的对比损失,同一个批次内部，利用正负样本的标签进行对比学习
+            loss = critertion_arcloss(out_feature, Label)  #计算融合特征和正负样本标签的对比损失,同一个批次内部，利用正负样本的标签进行对比学习
             # loss3 = critertion_BCE(user_speaker.squeeze(), user.float())  #计算二分类交叉熵损失函数
             # loss = (1-loss1).mean() + loss2 + loss3  #总损失函数， loss2 *0.1系数，平衡损失
             # loss = (1-loss1).mean() + loss2
@@ -245,19 +276,19 @@ def trainer_synapse(model):
             scheduler.step() #动态更新学习率,每10个epoch更新一次学习率
             print(f'Learning rate adjusted: {scheduler.get_last_lr()[0]}')
         if (epoch + 1) % 50 == 0:
-            torch.save(model.state_dict(), f'./checkpoints/stage2/model_epoch_{epoch+1}.pth')
+            torch.save(model.state_dict(), f'./checkpoints/stage3/model_epoch_{epoch+1}.pth')
             print(f'Model saved at epoch {epoch+1}')
 
         if epoch == 0 or loss.item() < best_loss: #训练集上损失最小，不代表在测试集上效果最好。一般取的是验证集准确度最高或者验证集损失最小进行存储
             best_loss = loss.item()
-            torch.save(model.state_dict(), './checkpoints/stage2/best_model.pth') #多卡训练时，应该改成 torch.save(model.module.state_dict(), './outputs/best_model.pth')
+            torch.save(model.state_dict(), './checkpoints/stage3/best_model.pth') #多卡训练时，应该改成 torch.save(model.module.state_dict(), './outputs/best_model.pth')
             print(f'Best model saved with loss {best_loss}')
 
         # Save the training loss to a CSV file
         # with open('./output/train_process.csv', mode='a', newline='') as file:
         #     writer = csv.writer(file)
         #     writer.writerow([epoch + 1, loss.item()])
-    with open('./outputs/stage2/train_process.csv', mode='w', newline='') as file:
+    with open('./outputs/stage3/train_process.csv', mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Epoch', 'Loss'])
         writer.writerows(all_losses)
@@ -279,21 +310,37 @@ def main_train_CrossViT():
     frames_per_sec = 10
     
     # Initialize model
-    model = Stage2Model(feature_dim=feature_dim)
+    model = Stage3Model(feature_dim=feature_dim)
 
     trainer_synapse(model)
 
 
 def test_model(model):
     
-    batch_size = 384
+    batch_size = 1024
 
     #test dataset path
     #正样本和负样本，负样本是正样本的10倍数量，合在一起进行推理
     # data_path = r"E:\dataset\ultrasound_video_audio\DATA\dataset\test_dataset_ldxTest.csv" #
-    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset.csv" #正样本 linux  
-    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_fakeMismatch.csv" #负样本 linux  
-    data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_ldxTest.csv" #正样本 linux  
+    
+    data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset.csv" #正样本 linux  
+    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_fakeMismatch.csv" #负样本 linux
+    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_crossUser.csv" #正样本 linux   
+    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_fake_cf.csv" #正样本 linux 
+    # data_path = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/test_dataset_ldxTest.csv" #正样本 linux  
+     
+    
+    #output path
+    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\test_dataset_crossUser_false" #negitive samples
+    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\test_dataset_crossUser_true" #positive samples
+    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\stage2_2_test_dataset_true1" #
+    # output_path = r"E:\dataset\ultrasound_video_audio\record\stage2_test_dataset_ldxTest" #mismatching negitive samples, 只保存预测的label
+    
+    output_path = "/root/autodl-tmp/Results/test_dataset"
+    # output_path = "/root/autodl-tmp/Results/test_dataset_fakeMismatch"
+    # output_path = "/root/autodl-tmp/Results/test_dataset_crossUser"
+    # output_path = "/root/autodl-tmp/Results/test_dataset_fake_cf"
+    # output_path = "/root/autodl-tmp/Results/test_dataset_ldxTest"
     
 
 
@@ -303,19 +350,9 @@ def test_model(model):
     print("====== Test Dataset Count: =======", test_dataset.__len__())
 
 
-    #output path
-    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\test_dataset_crossUser_false" #negitive samples
-    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\test_dataset_crossUser_true" #positive samples
-    # output_path = r"Z:\dataset\accelerometer_audio\AccSeal\WG\stage2_2_test_dataset_true1" #
-    # output_path = r"E:\dataset\ultrasound_video_audio\record\stage2_test_dataset_ldxTest" #mismatching negitive samples, 只保存预测的label
-    # output_path = "/root/autodl-tmp/test_dataset_fakeMismatch"
-    # output_path = "/root/autodl-tmp/test_dataset"
-    output_path = "/root/autodl-tmp/test_dataset_ldxTest"
-   
-
     # 加载预训练模型参数
-    # model_path = "./checkpoints/model_epoch_400.pth"  # 使用最后一个epoch的模型
-    model_path = "./checkpoints/stage2/best_model.pth"  # 使用best_model
+    # model_path = "./checkpoints/stage3/model_epoch_400.pth"  # 使用最后一个epoch的模型
+    model_path = "./checkpoints/stage3/best_model.pth"  # 使用best_model
     # model_path = "Z:/dataset/accelerometer/record/RESULT_original_xyzTrans_removeTimbre_average_BIGVGAN_swinUnet_LGDZN/model_epoch_400.pth"  # 使用best_model
     # model_path = r"Z:\dataset\accelerometer_audio\AccVoice\record\RESULT_original_removeTimbre_average_BIGVGAN_swinUnet_crossUser2\best_model.pth"
 
@@ -337,6 +374,7 @@ def test_model(model):
             video = batch['video']
             # speaker = batch['speaker']
             # user = batch['user']
+            Label = batch['Label']          #[N] 多类别标签，0~N-1
 
             # audio = torch.transpose(audio, -2, -1)  #转置，变成[N, 1, 500, 80]
             # acc = torch.transpose(acc, -2, -1)
@@ -346,16 +384,16 @@ def test_model(model):
             modal_ultrasound = ultrasound.cuda(non_blocking=True) #将 Tensor 数据从 CPU 移动到 GPU 时，可以通过设置 non_blocking=True 来启用异步传输模式，从而提高计算效率。
             
             time_start = time.time()
-            speaker_feature, user_verification = model(modal_ultrasound, modal_video)
+            v_feature, fusion_feature = model(modal_ultrasound, modal_video)
             # fake_clean = model(noisy_imgs)
             time_end = time.time()
 
             print("inference time: ", time_end - time_start)
-            print("average inference time per sample: ", (time_end - time_start)/speaker_feature.shape[0])
+            print("average inference time per sample: ", (time_end - time_start)/v_feature.shape[0])
 
 
-            output = speaker_feature.squeeze(dim=1).cpu().numpy()
-            output2 = user_verification.squeeze(dim=1).cpu().numpy()
+            output = v_feature.squeeze(dim=1).cpu().numpy()
+            output2 = fusion_feature.squeeze(dim=1).cpu().numpy()
             
             print("output shape: ", output.shape)
             for j in range(output.shape[0]):
@@ -375,8 +413,8 @@ def test_model(model):
                 print(f"Saving to directory: {nested_dir}")
                 
                 # Full output path with nested directories
-                output_file = os.path.join(nested_dir, f"{sample_names[save_path_index]}.npy")
-                output_file2 = os.path.join(nested_dir, f"{sample_names[save_path_index]}.txt")
+                output_file = os.path.join(nested_dir, f"{sample_names[save_path_index]}_v.npy")
+                output_file2 = os.path.join(nested_dir, f"{sample_names[save_path_index]}_fusion.npy")
 
                 print(f"Output file paths: {output_file}, {output_file2}")
                 
@@ -385,10 +423,11 @@ def test_model(model):
                 # out2 = 0 if out2 < 0.5 else 1
 
                 np.save(output_file, out)
-                with open(output_file2, "w") as file:
-                    file.write(str(out2))
                 
-                # np.save(output_file2, out2)
+                # with open(output_file2, "w") as file:
+                #     file.write(str(out2))
+                
+                np.save(output_file2, out2)
 
                 save_path_index += 1
     # del model, dataloader
@@ -403,7 +442,7 @@ def main_test_CrossViT():
     frames_per_sec = 10
     
     # Initialize model
-    model = Stage2Model(feature_dim=feature_dim)
+    model = Stage3Model(feature_dim=feature_dim)
     test_model(model)
 
 if __name__ == "__main__":

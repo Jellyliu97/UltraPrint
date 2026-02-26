@@ -90,8 +90,9 @@ def create_dataset_csv(root_dir, train_ratio=0.8):
     print(f"Saved train CSV to: {train_csv_path}")
     print(f"Saved test CSV to: {test_csv_path}")
 
-def create_dataset_csv2():
-    root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
+#different distance test
+def create_dataset_csv2(root_dir):
+    # root_dir = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
     target_dirs = ['ldx0', 'ldx1', 'ldx2', 'ldx3', 'ldx4', 'ldx5']
     label = 1
 
@@ -214,8 +215,10 @@ def create_negative_samples_csv():
 
 if __name__ == "__main__":
     # Note: Using raw string for Windows path to avoid escape character issues
-    dataset_root = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
-    create_dataset_csv(dataset_root, train_ratio=0.9)
+    # dataset_root = r"E:\dataset\ultrasound_video_audio\DATA\dataset"
+    dataset_root = "/root/autodl-tmp/UltraPrint_dataset/dataset_npy/"
+
+    # create_dataset_csv(dataset_root, train_ratio=0.9)
 
     create_dataset_csv2()
 

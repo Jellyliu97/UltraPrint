@@ -1,0 +1,4 @@
+Impact_Type	Impact_Level	User	Accuracy	Correct	Total
+phone	S22Ultra	ldx	0.0000	0	1
+phone	oneplus	ldx	1.0000	47	47
+phone	vivo	ldx	0.0000	0	4
