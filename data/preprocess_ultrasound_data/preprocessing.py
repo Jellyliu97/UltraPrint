@@ -9,6 +9,7 @@ import shutil
 import zipfile
 import tempfile
 
+outer_folder_lists = ['20260121', '20260122', '20260123', '20260124']
 
 def extract_rawdata2data(raw_input_root, raw_output_root):
     if not os.path.exists(raw_output_root):
@@ -16,6 +17,8 @@ def extract_rawdata2data(raw_input_root, raw_output_root):
 
     # Iterate through outer folders in raw_input_root
     for outer_folder in tqdm(os.listdir(raw_input_root), desc="Processing Folders"):
+        if outer_folder not in outer_folder_lists:  # Skip unwanted folders
+            continue
         outer_path = os.path.join(raw_input_root, outer_folder)
         
         # Ensure it is a directory
@@ -25,7 +28,7 @@ def extract_rawdata2data(raw_input_root, raw_output_root):
         # Iterate through items in the outer folder
         for item in os.listdir(outer_path):
             # Check if item ends with .zip and is a directory
-            print("test extract:", item)
+            print("extract:", item)
             if item.endswith('.zip') and item[0] != '.':
                 item_path = os.path.join(outer_path, item)
                 #读取.zip文件中的内容，并保存到raw_output_root对应的文件夹中
@@ -50,10 +53,6 @@ def extract_rawdata2data(raw_input_root, raw_output_root):
                                 
                     except zipfile.BadZipFile:
                         print(f"Warning: Could not unzip {item_path}")
-
-
-
-
 
 def extract_distance_unchanged(data_I, data_Q):
     # 0. Time Gain Compensation (TGC)
@@ -204,6 +203,7 @@ def preprocess_dataset(input_root, output_root, T=1, stride=1):
     # user_dirs = [u for u in user_dirs if u not in skip_users]
 
     for user in tqdm(user_dirs, desc="Processing Users"):
+        
         user_input_path = os.path.join(input_root, user)
         user_output_path = os.path.join(output_root, user)
         os.makedirs(user_output_path, exist_ok=True)
@@ -266,6 +266,95 @@ def preprocess_dataset(input_root, output_root, T=1, stride=1):
             current_time += stride
             sample_idx += 1
 
+def preprocess_dataset2(input_root, output_root, T=1, stride=1):
+        select_folder = ["impact_angle", "impact_dis", "impact_phone"]
+        # Parameters
+        AUDIO_SR = 48000
+        US_SR = 3000
+
+        # Iterate over top-level folders (Group/Specific Folders) in input_root
+        for group_folder in tqdm(os.listdir(input_root), desc="Processing Groups"):
+            if group_folder not in select_folder: ###select specific folders
+                continue
+            group_path = os.path.join(input_root, group_folder)
+            if not os.path.isdir(group_path):
+                continue
+
+            # Output to a folder with the same name in output_root
+            # All samples for this group (from inner actions/users) will be flattened here
+            group_output_path = os.path.join(output_root, group_folder)
+            os.makedirs(group_output_path, exist_ok=True)
+
+            # Layer 1: Iterate Action folders
+            for action_folder in os.listdir(group_path):
+                action_path = os.path.join(group_path, action_folder)
+                if not os.path.isdir(action_path):
+                    continue
+                
+                # Layer 2: Iterate User folders
+                for user_folder in os.listdir(action_path):
+                    user_path = os.path.join(action_path, user_folder)
+                    if not os.path.isdir(user_path):
+                        continue
+
+                    # Locate files
+                    wav_files = glob.glob(os.path.join(user_path, "*.wav"))
+                    mp4_files = glob.glob(os.path.join(user_path, "*.mp4"))
+                    npy_files = glob.glob(os.path.join(user_path, "*.npy"))
+                    
+                    if not (wav_files and mp4_files and npy_files):
+                        continue
+                        
+                    wav_path = wav_files[0]
+                    mp4_path = mp4_files[0]
+                    npy_path = npy_files[0]
+                    
+                    try:
+                        # Load Data
+                        audio_data, _ = librosa.load(wav_path, sr=AUDIO_SR)
+                        raw_us_data = np.load(npy_path)
+                        
+                        audio_duration = len(audio_data) / AUDIO_SR
+                        us_duration = raw_us_data.shape[-1] / US_SR
+                        total_duration = min(audio_duration, us_duration)
+                        
+                        current_time = 0.0
+                        sample_idx = 0
+                        
+                        # Prefix format: Group_Action_User
+                        prefix = f"{group_folder}_{action_folder}_{user_folder}"
+                        
+                        while current_time + T <= total_duration:
+                            segment_name = f"{prefix}_seg_{sample_idx:04d}"
+                            
+                            # 1. Ultrasound Processing
+                            us_start = int(current_time * US_SR)
+                            us_end = int((current_time + T) * US_SR)
+                            us_seg = raw_us_data[:, :, us_start:us_end]
+                            proc_us = process_ultrasound_iq(us_seg)
+                            
+                            np.save(os.path.join(group_output_path, f"{segment_name}_us.npy"), proc_us)
+                            
+                            # 2. Audio Processing
+                            au_start = int(current_time * AUDIO_SR)
+                            au_end = int((current_time + T) * AUDIO_SR)
+                            au_seg = audio_data[au_start:au_end]
+                            sf.write(os.path.join(group_output_path, f"{segment_name}_audio.wav"), au_seg, AUDIO_SR)
+                            
+                            # 3. Video Processing
+                            save_video_segment(mp4_path, current_time, T, os.path.join(group_output_path, f"{segment_name}_video.mp4"))
+                            
+                            current_time += stride
+                            sample_idx += 1
+                            
+                    except Exception as e:
+                        print(f"Error processing files in {user_path}: {e}")
+
+        # Explicitly creating a comment here to absorb the trailing function signature in the file
+        #
+    
+
+
 def move_dataset_npy(OUTPUT_DIR, OUTPUT_NPY_DIR):
         if not os.path.exists(OUTPUT_NPY_DIR):
             os.makedirs(OUTPUT_NPY_DIR)
@@ -292,9 +381,12 @@ def move_dataset_npy(OUTPUT_DIR, OUTPUT_NPY_DIR):
 def move_dataset_npy2(OUTPUT_DIR, OUTPUT_NPY_DIR):
         if not os.path.exists(OUTPUT_NPY_DIR):
             os.makedirs(OUTPUT_NPY_DIR)
+        select_folder = ["impact_angle", "impact_dis", "impact_phone"]
 
         # Iterate through user folders
         for user_folder in tqdm(os.listdir(OUTPUT_DIR), desc="Moving Paired NPY Files"):
+            if user_folder not in select_folder: ###select specific folders
+                continue
             user_path = os.path.join(OUTPUT_DIR, user_folder)
             
             if not os.path.isdir(user_path):
@@ -326,7 +418,8 @@ def move_dataset_npy2(OUTPUT_DIR, OUTPUT_NPY_DIR):
         #
 
 
-
+# def rename_path():
+    
 
 if __name__ == "__main__":
     RAW_INPUT_DIR = r"E:\dataset\ultrasound_video_audio\DATA_RAW\RAW_DATA"
@@ -337,13 +430,16 @@ if __name__ == "__main__":
 
     # extract_rawdata2data(RAW_INPUT_DIR, INPUT_DIR)
 
-    # # Set window length T and stride here
-    # WINDOW_LENGTH_T = 5  # Example: T=5 seconds 
-    # STRIDE = 5           # 1 second stride
+    # Set window length T and stride here
+    WINDOW_LENGTH_T = 5  # Example: T=5 seconds 
+    STRIDE = 5           # 1 second stride
     
-    # print("Starting preprocessing...")
+    print("Starting preprocessing...")
     # preprocess_dataset(INPUT_DIR, OUTPUT_DIR, T=WINDOW_LENGTH_T, stride=STRIDE)
-    # print("Preprocessing complete.")
+    # preprocess_dataset2(INPUT_DIR, OUTPUT_DIR, T=WINDOW_LENGTH_T, stride=STRIDE)
+    print("Preprocessing complete.")
 
 
     move_dataset_npy2(OUTPUT_DIR, OUTPUT_NPY_DIR)
+    
+    
